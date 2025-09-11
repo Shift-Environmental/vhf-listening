@@ -1,0 +1,22 @@
+[Unit]
+Description=VHF Listening Station - GNU Radio
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/vhf-listening
+Environment=PYTHONPATH=/home/pi/vhf-listening/venv/lib/python3.*/site-packages
+ExecStartPre=/bin/bash -c 'rm -f /tmp/vhf_audio_pipe && mkfifo -m 666 /tmp/vhf_audio_pipe'
+ExecStart=/home/pi/vhf-listening/venv/bin/python gnuradio/options_0.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Ensure RTL-SDR device access
+SupplementaryGroups=plugdev
+
+[Install]
+WantedBy=multi-user.target

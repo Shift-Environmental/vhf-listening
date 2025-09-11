@@ -1,0 +1,11 @@
+# GNU Radio VHF Implementation - Python Dependencies
+# 
+# Note: GNU Radio itself must be installed via system packages:
+# sudo apt install gnuradio gnuradio-dev gr-osmosdr
+
+# Essential Python packages for signal processing
+numpy>=1.20.0
+scipy>=1.7.0
+
+# Environment configuration
+python-dotenv>=0.19.0
