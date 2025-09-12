@@ -2,7 +2,30 @@
 
 A GNU Radio-based VHF monitoring system that captures marine emergency communications (Channel 16) and streams audio via Icecast for real-time emergency detection and analysis.
 
-### System Architecture
+# Table of Contents
+
+- [Overview](#overview)
+- [Raspberry Pi Setup Guide](#raspberry-pi-setup-guide)
+  - [System Dependencies](#system-dependencies)
+  - [RTL-SDR Blog v4 Driver Installation](#rtl-sdr-blog-v4-driver-installation)
+  - [Install GNU Radio](#install-gnu-radio)
+  - [Verify Installation](#verify-installation)
+  - [Optional: Static IP Configuration](#optional-static-ip-configuration)
+  - [Python Environment Setup](#python-environment-setup)
+  - [Configuration Setup](#configuration-setup)
+  - [Service Installation](#service-installation)
+- [AWS Cloud Deployment](#aws-cloud-deployment)
+  - [Set up SSH key](#set-up-ssh-key)
+  - [Deploy AWS Icecast Server](#deploy-aws-icecast-server)
+  - [Update Pi Configuration](#update-pi-configuration)
+  - [Test Public Stream](#test-public-stream)
+- [Development Workflow](#development-workflow)
+  - [Opening GNU Radio Companion on Raspberry Pi](#opening-gnu-radio-companion-on-raspberry-pi-with-gui)
+  - [Raspberry Pi Service Management](#raspberry-pi-service-management)
+
+# Overview
+
+## System Architecture
 
 ```
 RTL-SDR Hardware → GNU Radio Processing → FFmpeg → Icecast Server → Web Stream
@@ -11,7 +34,7 @@ RTL-SDR Hardware → GNU Radio Processing → FFmpeg → Icecast Server → Web 
 ### Core Components
 - GNU Radio Companion: Development tool, visual flowgraph environment  
 - Headless GNU Radio: Production signal processing (gnuradio/options_0.py)
-- RTL-SDR: Software Defined Radio hardware
+- RTL-SDR V4: Software Defined Radio hardware
 - FFmpeg: Audio encoding and streaming
 - Icecast: Web audio streaming server
 
@@ -24,6 +47,7 @@ RTL-SDR Hardware → GNU Radio Processing → FFmpeg → Icecast Server → Web 
 ### Helpful Resources
 - [GNU Radio Wiki - RTL-SDR Tutorial](https://wiki.gnuradio.org/index.php?title=RTL-SDR_FM_Receiver)
 - [PySDR Guide - RTL-SDR and WSL use](https://pysdr.org/content/rtlsdr.html#ubuntu-or-ubuntu-within-wsl)
+- [RTL-SDR V4 Driver Information](https://www.rtl-sdr.com/V4/)
 
 ---
 
@@ -37,15 +61,6 @@ Starting with a blank Raspberry Pi OS installation:
 # Update system
 sudo apt update && sudo apt upgrade -y
 
-# Install GNU Radio and RTL-SDR tools
-sudo apt install -y gnuradio gnuradio-dev gr-osmosdr rtl-sdr
-
-# If installation fails with xtrx-dkms errors, run:
-# sudo apt remove xtrx-dkms
-# sudo apt autoremove
-# sudo apt update && sudo apt upgrade
-# Then retry the installations above
-
 # Install FFmpeg for audio streaming  
 sudo apt install -y ffmpeg
 
@@ -57,32 +72,83 @@ sudo apt install -y python3-pip python3-venv
 
 ```
 
-**⚠️ Reboot required** after RTL-SDR setup:
+## RTL-SDR Blog v4 Driver Installation
+
+The v4 uses updated circuitry that requires newer drivers for proper functionality. Without these drivers, you may experience no signals, wrong frequencies, or corrupted reception.
+
 ```bash
+# Remove any existing RTL-SDR drivers (if present)
+sudo apt purge --auto-remove ^librtlsdr rtl-sdr
+sudo rm -rf /usr/bin/rtl_* /usr/local/bin/rtl_* /usr/lib/*/librtlsdr* /usr/local/lib/librtlsdr* /usr/include/rtl-sdr* /usr/local/include/rtl_*
+
+# Remove any existing GNU Radio and related packages (if present)
+sudo apt remove --purge gnuradio gnuradio-dev gr-osmosdr soapysdr-tools soapysdr-module-rtlsdr
+sudo apt autoremove
+
+# Clear library cache
+sudo ldconfig
+
+# Install build dependencies for RTL-SDR v4 
+sudo apt install -y libusb-1.0-0-dev git cmake pkg-config
+
+# Clone and build RTL-SDR Blog v4 drivers
+cd ~
+git clone https://github.com/rtlsdrblog/rtl-sdr-blog
+cd rtl-sdr-blog
+mkdir build
+cd build
+cmake ../ -DINSTALL_UDEV_RULES=ON
+make
+sudo make install
+sudo cp ../rtl-sdr.rules /etc/udev/rules.d/
+sudo ldconfig
+
+# Blacklist conflicting drivers
+echo 'blacklist dvb_usb_rtl28xxu' | sudo tee --append /etc/modprobe.d/blacklist-dvb_usb_rtl28xxu.conf
+
+# Update PATH to prioritize RTL-SDR Blog drivers
+echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+
+# Reboot to apply driver changes
 sudo reboot
 ```
 
-> ### Hardware Verification
->
-> #### Test RTL-SDR Connection
-> ```bash
-> # Check if RTL-SDR is detected
-> rtl_test -t
->
-> # Expected output: "Found 1 device(s): 0: Realtek, RTL2838UHIDIR..."
-> # Press Ctrl+C after a few seconds of successful testing
-> ```
->
-> #### Test GNU Radio Installation
-> ```bash
-> # Launch GNU Radio test
-> python3 -c "from gnuradio import gr; print('GNU Radio version:', gr.version())"
->
-> # Test RTL-SDR integration
-> python3 -c "import osmosdr; print('osmoSDR available')"
-> ```
+## Install GNU Radio
 
-### Optional: Static IP Configuration
+**Only after rebooting from RTL-SDR v4 driver installation:**
+
+```bash
+# Install GNU Radio and RTL-SDR tools
+sudo apt install -y gnuradio gnuradio-dev gr-osmosdr
+
+# Install SoapySDR RTL-SDR module for GNU Radio compatibility
+sudo apt install -y soapysdr-module-rtlsdr
+
+# Install SoapySDR tools
+sudo apt install -y soapysdr-tools
+
+# Second reboot required after GNU Radio installation:
+sudo reboot
+```
+
+## Verify Installation
+
+After reboot, test that everything works:
+
+```bash
+# Test RTL-SDR v4 detection (should show "RTL-SDR Blog V4 Detected")
+rtl_test
+
+# Test signal reception - should hear FM radio music
+rtl_fm -f 101500000 -M wbfm -s 200000 -r 48000 -g 49.6 | aplay -r 48000 -f S16_LE
+
+# Test GNU Radio installation
+python3 -c "from gnuradio import gr; print('GNU Radio version:', gr.version())"
+python3 -c "import osmosdr; print('osmoSDR available')"
+```
+
+## Optional: Static IP Configuration
 Configure a static IP on the Raspberry Pi to ensure consistent SSH access and service reliability:
 
 1. **Find your current network info:**
@@ -233,7 +299,7 @@ http://your-aws-server:8888/vhf_stream.mp3
 
 ## Opening GNU Radio Companion on Raspberry Pi (with GUI)
 
-For GNU Radio Companion development, flowgraph customization, and parameter tuning, see the **[GNU Radio Companion Development Guide](GRC_DEVELOPMENT_GUIDE.md)**.
+For GNU Radio Companion development, flowgraph customization, and parameter tuning, see the **[GNU Radio Companion Development Guide](/docs/GRC_DEVELOPMENT_GUIDE.md)**.
 
 The development guide covers:
 - Understanding GNU Radio Companion blocks and variables
