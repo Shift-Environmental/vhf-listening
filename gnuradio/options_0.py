@@ -8,27 +8,57 @@
 # Title: VHF Listening Station
 # GNU Radio version: 3.10.9.2
 
+from PyQt5 import Qt
+from gnuradio import qtgui
 from gnuradio import analog
-from gnuradio import blocks
 from gnuradio import filter
 from gnuradio.filter import firdes
 from gnuradio import gr
 from gnuradio.fft import window
 import sys
 import signal
+from PyQt5 import Qt
 from argparse import ArgumentParser
 from gnuradio.eng_arg import eng_float, intx
 from gnuradio import eng_notation
 from gnuradio import soapy
 import math
+import options_0_epy_block_0 as epy_block_0  # embedded python block
+import os; os.environ['QT_QPA_PLATFORM'] = 'offscreen'
 
 
 
-
-class options_0(gr.top_block):
+class options_0(gr.top_block, Qt.QWidget):
 
     def __init__(self):
         gr.top_block.__init__(self, "VHF Listening Station", catch_exceptions=True)
+        Qt.QWidget.__init__(self)
+        self.setWindowTitle("VHF Listening Station")
+        qtgui.util.check_set_qss()
+        try:
+            self.setWindowIcon(Qt.QIcon.fromTheme('gnuradio-grc'))
+        except BaseException as exc:
+            print(f"Qt GUI: Could not set Icon: {str(exc)}", file=sys.stderr)
+        self.top_scroll_layout = Qt.QVBoxLayout()
+        self.setLayout(self.top_scroll_layout)
+        self.top_scroll = Qt.QScrollArea()
+        self.top_scroll.setFrameStyle(Qt.QFrame.NoFrame)
+        self.top_scroll_layout.addWidget(self.top_scroll)
+        self.top_scroll.setWidgetResizable(True)
+        self.top_widget = Qt.QWidget()
+        self.top_scroll.setWidget(self.top_widget)
+        self.top_layout = Qt.QVBoxLayout(self.top_widget)
+        self.top_grid_layout = Qt.QGridLayout()
+        self.top_layout.addLayout(self.top_grid_layout)
+
+        self.settings = Qt.QSettings("GNU Radio", "options_0")
+
+        try:
+            geometry = self.settings.value("geometry")
+            if geometry:
+                self.restoreGeometry(geometry)
+        except BaseException as exc:
+            print(f"Qt GUI: Could not restore geometry: {str(exc)}", file=sys.stderr)
 
         ##################################################
         # Variables
@@ -38,7 +68,7 @@ class options_0(gr.top_block):
         self.samp_rate = samp_rate = 240000
         self.quad_rate = quad_rate = audio_rate*audio_decim
         self.gcd_value = gcd_value = math.gcd(int(samp_rate), int(quad_rate))
-        self.rfGain = rfGain = 48
+        self.rfGain = rfGain = 49
         self.lowpass_trans_width = lowpass_trans_width = 3000
         self.lowpass_cutoff_freq = lowpass_cutoff_freq = 12000
         self.interp = interp = int(quad_rate / gcd_value)
@@ -87,15 +117,14 @@ class options_0(gr.top_block):
         self.soapy_rtlsdr_source_0.set_frequency_correction(0, 0)
         self.set_soapy_rtlsdr_source_0_bias(bool(False))
         self._soapy_rtlsdr_source_0_gain_value = rfGain
-        self.set_soapy_rtlsdr_source_0_gain_mode(0, bool(True))
+        self.set_soapy_rtlsdr_source_0_gain_mode(0, bool(False))
         self.set_soapy_rtlsdr_source_0_gain(0, 'TUNER', rfGain)
         self.rational_resampler_xxx_0 = filter.rational_resampler_ccc(
                 interpolation=interp,
                 decimation=decim,
                 taps=[],
                 fractional_bw=0)
-        self.blocks_file_sink_0 = blocks.file_sink(gr.sizeof_float*1, '/tmp/vhf_audio_pipe', False)
-        self.blocks_file_sink_0.set_unbuffered(True)
+        self.epy_block_0 = epy_block_0.blk()
         self.analog_rail_ff_0 = analog.rail_ff((-.8), 0.8)
         self.analog_nbfm_rx_0 = analog.nbfm_rx(
         	audio_rate=audio_rate,
@@ -109,10 +138,18 @@ class options_0(gr.top_block):
         # Connections
         ##################################################
         self.connect((self.analog_nbfm_rx_0, 0), (self.analog_rail_ff_0, 0))
-        self.connect((self.analog_rail_ff_0, 0), (self.blocks_file_sink_0, 0))
+        self.connect((self.analog_rail_ff_0, 0), (self.epy_block_0, 0))
         self.connect((self.rational_resampler_xxx_0, 0), (self.analog_nbfm_rx_0, 0))
         self.connect((self.soapy_rtlsdr_source_0, 0), (self.rational_resampler_xxx_0, 0))
 
+
+    def closeEvent(self, event):
+        self.settings = Qt.QSettings("GNU Radio", "options_0")
+        self.settings.setValue("geometry", self.saveGeometry())
+        self.stop()
+        self.wait()
+
+        event.accept()
 
     def get_audio_rate(self):
         return self.audio_rate
@@ -235,21 +272,29 @@ class options_0(gr.top_block):
 
 
 def main(top_block_cls=options_0, options=None):
+
+    qapp = Qt.QApplication(sys.argv)
+
     tb = top_block_cls()
+
+    tb.start()
+
+    tb.show()
 
     def sig_handler(sig=None, frame=None):
         tb.stop()
         tb.wait()
 
-        sys.exit(0)
+        Qt.QApplication.quit()
 
     signal.signal(signal.SIGINT, sig_handler)
     signal.signal(signal.SIGTERM, sig_handler)
 
-    tb.start()
+    timer = Qt.QTimer()
+    timer.start(500)
+    timer.timeout.connect(lambda: None)
 
-    tb.wait()
-
+    qapp.exec_()
 
 if __name__ == '__main__':
     main()

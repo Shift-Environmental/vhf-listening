@@ -47,10 +47,10 @@ scp docs/GRC_DEVELOPMENT_GUIDE.md $PI_HOST:~/$PROJECT_DIR/docs/
 # GNU Radio files
 scp gnuradio/options_0.py $PI_HOST:~/$PROJECT_DIR/gnuradio/
 scp gnuradio/vhfListeningGRC.grc $PI_HOST:~/$PROJECT_DIR/gnuradio/
+scp gnuradio/icecast_sink.py $PI_HOST:~/$PROJECT_DIR/gnuradio/
 
 # Service files
 scp services/vhf-gnuradio.service $PI_HOST:~/$PROJECT_DIR/services/
-scp services/vhf-ffmpeg.service $PI_HOST:~/$PROJECT_DIR/services/
 
 # Scripts
 scp scripts/pi_install_services.sh $PI_HOST:~/$PROJECT_DIR/scripts/
@@ -61,5 +61,4 @@ echo "Next steps on the Pi:"
 echo "1. ssh $PI_HOST"
 echo "2. cd $PROJECT_DIR"
 echo "3. Install services: ./scripts/pi_install_services.sh"
-echo "4. Start services: sudo systemctl start vhf-gnuradio vhf-ffmpeg"
-echo "5. Check status: sudo systemctl status vhf-gnuradio"
+echo "4. Check status: sudo systemctl status vhf-gnuradio"

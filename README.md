@@ -22,20 +22,21 @@ A GNU Radio-based VHF monitoring system that captures marine emergency communica
 - [Development Workflow](#development-workflow)
   - [Opening GNU Radio Companion on Raspberry Pi](#opening-gnu-radio-companion-on-raspberry-pi-with-gui)
   - [Raspberry Pi Service Management](#raspberry-pi-service-management)
+  - [Restoring the Custom Icecast Sink](#restoring-the-custom-icecast-sink)
 
 # Overview
 
 ## System Architecture
 
 ```
-RTL-SDR Hardware → GNU Radio Processing → FFmpeg → Icecast Server → Web Stream
+RTL-SDR Hardware → GNU Radio Processing → Direct Icecast Streaming → Web Stream
 ```
 
 ### Core Components
-- GNU Radio Companion: Development tool, visual flowgraph environment  
-- Headless GNU Radio: Production signal processing (gnuradio/options_0.py)
+- GNU Radio Companion: Development tool, visual flowgraph environment
+- Headless GNU Radio: Production signal processing with embedded Icecast sink (gnuradio/options_0.py)
 - RTL-SDR V4: Software Defined Radio hardware
-- FFmpeg: Audio encoding and streaming
+- Custom Icecast Sink: Real-time MP3 encoding and direct streaming
 - Icecast: Web audio streaming server
 
 ### Hardware Requirements
@@ -61,11 +62,8 @@ Starting with a blank Raspberry Pi OS installation:
 # Update system
 sudo apt update && sudo apt upgrade -y
 
-# Install FFmpeg for audio streaming  
-sudo apt install -y ffmpeg
-
-# Install Icecast server
-sudo apt install -y icecast2
+# Install audio streaming dependencies
+sudo apt install -y libshout3-dev libvorbis-dev
 
 # Install Python development tools
 sudo apt install -y python3-pip python3-venv
@@ -106,8 +104,13 @@ sudo ldconfig
 # Blacklist conflicting drivers
 echo 'blacklist dvb_usb_rtl28xxu' | sudo tee --append /etc/modprobe.d/blacklist-dvb_usb_rtl28xxu.conf
 
-# Update PATH to prioritize RTL-SDR Blog drivers
+# Update PATH to prioritize RTL-SDR Blog v4 executables (prevents using system rtl_test, rtl_fm, etc.)
 echo 'export PATH=/usr/local/bin:$PATH' >> ~/.bashrc
+
+# Update library path to prioritize RTL-SDR Blog v4 libraries (prevents GNU Radio from loading system librtlsdr)  
+echo 'export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH' >> ~/.bashrc
+
+# Apply both environment changes
 source ~/.bashrc
 
 # Reboot to apply driver changes
@@ -121,7 +124,18 @@ sudo reboot
 ```bash
 # Install GNU Radio and RTL-SDR tools
 sudo apt install -y gnuradio gnuradio-dev gr-osmosdr
+```
 
+> If you recieve an error: Remove the problematic xtrx-dkms package, we don't need XTRX hardware
+> ```
+> sudo apt remove --purge xtrx-dkms
+> ```
+> Fix any broken package dependencies
+> ``` 
+> sudo apt --fix-broken install
+> ```
+
+```bash
 # Install SoapySDR RTL-SDR module for GNU Radio compatibility
 sudo apt install -y soapysdr-module-rtlsdr
 
@@ -142,6 +156,9 @@ rtl_test
 
 # Test signal reception - should hear FM radio music
 rtl_fm -f 101500000 -M wbfm -s 200000 -r 48000 -g 49.6 | aplay -r 48000 -f S16_LE
+
+# Test that SoapySDR can find the RTL-SDR v4 (should show "RTL-SDR Blog V4 Detected")
+SoapySDRUtil --find="driver=rtlsdr"
 
 # Test GNU Radio installation
 python3 -c "from gnuradio import gr; print('GNU Radio version:', gr.version())"
@@ -210,15 +227,30 @@ Before installing services, configure your environment variables. These are used
 
 2. **Edit `.env`** and fill in the values for your specific setup (AWS hostname, passwords, Pi IP address, etc.)
 
+## Manual Testing
+
+To test the GNU Radio pipeline manually before running as a service:
+
+```bash
+cd vhf-listening
+source venv/bin/activate
+gnuradio-companion gnuradio/vhfListeningGRC.grc
+# Once GNU-Radio Companion opens, click "generate", then exit.
+$VIRTUAL_ENV/bin/python3 gnuradio/options_0.py
+```
+
+This should show:
+- RTL-SDR Blog V4 detection
+- MP3 encoder initialization
+- Icecast connection success
+- Audio streaming to your configured Icecast server
+
 ## Service Installation
 
- The system uses two systemd services:
-  - **services/vhf-gnuradio.service**: Captures and processes VHF audio
+The system uses a single systemd service for direct Icecast streaming:
+- **services/vhf-gnuradio.service**: Captures VHF audio and streams directly to Icecast with real-time MP3 encoding
 
-  - **services/vhf-ffmpeg.service**: Streams audio to Icecast server
-
-  The install script will start both services and enable auto-restart
-  on failure.
+The install script will clean up old services and install the new simplified service.
 
 ```bash
 cd vhf-listening
@@ -226,9 +258,7 @@ chmod +x scripts/pi_install_services.sh
 ./scripts/pi_install_services.sh
 ```
 
-> Note: Connection errors are normal until Icecast is deployed - the 
-  service will automatically connect once available.
-
+> Note: Connection errors are normal until Icecast is deployed - the service will automatically connect once available.
 
 ---
 
@@ -283,7 +313,7 @@ If any environment variables were updated during the icecast server set up, send
 2. **Restart Pi services:**
    ```bash
    ssh pi@192.168.0.200
-   sudo systemctl restart vhf-gnuradio vhf-ffmpeg
+   sudo systemctl restart vhf-gnuradio
    ```
 
 ## Test Public Stream
@@ -315,36 +345,60 @@ gnuradio-companion gnuradio/vhfListeningGRC.grc
 
 ## Raspberry Pi Service Management
 
-#### Start Services
+#### Start Service
 ```bash
-# Start both services
-sudo systemctl start vhf-gnuradio vhf-ffmpeg
+# Start the VHF listening service
+sudo systemctl start vhf-gnuradio
 
 # Enable auto-start on boot
-sudo systemctl enable vhf-gnuradio vhf-ffmpeg
+sudo systemctl enable vhf-gnuradio
 ```
 
-#### Monitor Services
+#### Monitor Service
 ```bash
 # Check service status
 sudo systemctl status vhf-gnuradio
-sudo systemctl status vhf-ffmpeg
 
 # View real-time logs
 journalctl -u vhf-gnuradio -f
-journalctl -u vhf-ffmpeg -f
 
 # View recent logs
 journalctl -u vhf-gnuradio --since "1 hour ago"
 ```
 
-#### Restart Servcies
+#### Restart Service
 ```bash
-# If you need to restart services after configuration changes:
-sudo systemctl restart vhf-gnuradio vhf-ffmpeg
+# If you need to restart service after configuration changes:
+sudo systemctl restart vhf-gnuradio
 ```
 
-#### Stop Services
+#### Stop Service
 ```bash
-sudo systemctl stop vhf-gnuradio vhf-ffmpeg
+sudo systemctl stop vhf-gnuradio
 ```
+
+## Restoring the Custom Icecast Sink
+
+The VHF system uses a custom GNU Radio block for streaming audio directly to Icecast with MP3 encoding. This functionality is embedded in the GRC file as an "Embedded Python Block".
+
+### Quick Recovery
+
+If the custom icecast sink gets accidentally deleted:
+
+1. **Git restore (recommended):**
+   ```bash
+   git checkout -- gnuradio/vhfListeningGRC.grc
+   cd gnuradio && gnuradio-companion vhfListeningGRC.grc
+   # Click "Generate", then exit
+   ```
+
+2. **Master copy backup:** The complete implementation is in `gnuradio/icecast_sink.py`
+
+### For Developers
+
+For detailed restoration instructions, manual recreation steps, and development notes, see the **[Custom Icecast Sink Development](/docs/GRC_DEVELOPMENT_GUIDE.md#custom-icecast-sink-development)** section in the GNU Radio Companion Development Guide.
+
+**Key files to protect in git:**
+- `gnuradio/vhfListeningGRC.grc` (embedded block)
+- `gnuradio/icecast_sink.py` (master copy)
+- `services/vhf-gnuradio.service` (RTL-SDR v4 fix)

@@ -1,45 +1,56 @@
 #!/bin/bash
-# Install VHF Listening Station systemd services
+# Install VHF Listening Station systemd service (Direct Icecast Streaming)
 
-echo "Installing VHF Listening Station services..."
+echo "Installing VHF Listening Station service (Direct Icecast Streaming)..."
 
 # Stop existing services if they're running
 echo "Stopping existing services..."
 sudo systemctl stop vhf-ffmpeg.service 2>/dev/null || true
 sudo systemctl stop vhf-gnuradio.service 2>/dev/null || true
+sudo systemctl stop vhf-simple.service 2>/dev/null || true
 
-# Copy service files to systemd directory
-echo "Installing service files..."
+# Disable old services (no longer needed)
+echo "Disabling old services..."
+sudo systemctl disable vhf-ffmpeg.service 2>/dev/null || true
+sudo systemctl disable vhf-simple.service 2>/dev/null || true
+
+# Remove old service files
+echo "Cleaning up old service files..."
+sudo rm -f /etc/systemd/system/vhf-ffmpeg.service
+sudo rm -f /etc/systemd/system/vhf-simple.service
+
+# Copy new service file to systemd directory
+echo "Installing VHF GNU Radio service..."
 sudo cp services/vhf-gnuradio.service /etc/systemd/system/
-sudo cp services/vhf-ffmpeg.service /etc/systemd/system/
 
 # Set correct permissions
 sudo chmod 644 /etc/systemd/system/vhf-gnuradio.service
-sudo chmod 644 /etc/systemd/system/vhf-ffmpeg.service
 
 # Reload systemd
 sudo systemctl daemon-reload
 
-# Enable services (start on boot)
+# Enable service (start on boot)
+echo "Enabling VHF GNU Radio service..."
 sudo systemctl enable vhf-gnuradio.service
-sudo systemctl enable vhf-ffmpeg.service
 
-# Start services in correct order
-echo "Starting services in correct order..."
+# Start service
+echo "Starting VHF Listening Station (Direct Icecast Streaming)..."
 sudo systemctl start vhf-gnuradio.service
-sleep 2  # Give GNU Radio time to create the pipe
-sudo systemctl start vhf-ffmpeg.service
 
-echo "Services installed and started successfully!"
+# Check service status
+echo "Checking service status..."
+sudo systemctl status vhf-gnuradio.service
+
 echo ""
-echo "To start services:"
-echo "sudo systemctl start vhf-gnuradio"
-echo "sudo systemctl start vhf-ffmpeg"
+echo "✅ VHF Listening Station installed successfully!"
+echo "✅ Direct GNU Radio → Icecast streaming (no FFmpeg needed)"
+echo "✅ Single service solution"
 echo ""
-echo "To check status:"
-echo "sudo systemctl status vhf-gnuradio"
-echo "sudo systemctl status vhf-ffmpeg"
+echo "Useful commands:"
+echo "Check status:    sudo systemctl status vhf-gnuradio"
+echo "View logs:       journalctl -u vhf-gnuradio -f"
+echo "Stop service:    sudo systemctl stop vhf-gnuradio"
+echo "Start service:   sudo systemctl start vhf-gnuradio"
+echo "Restart service: sudo systemctl restart vhf-gnuradio"
 echo ""
-echo "To view logs:"
-echo "journalctl -u vhf-gnuradio -f"
-echo "journalctl -u vhf-ffmpeg -f"
+echo "Stream URL: http://vhf.shiftcims.com:8888/vhf_stream.mp3"

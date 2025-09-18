@@ -17,10 +17,25 @@
 
 **For Testing and Development:**
 - Use Victoria Weather Station: 162.400 MHz
-- Continuous reports make it perfect for testing 
+- Continuous reports make it perfect for testing
 
 **For Production Deployment:**
-- Marine Channel 16: 156.800 MHz (international emergency frequency)  
+- Marine Channel 16: 156.800 MHz (international emergency frequency)
+
+### How to Change Frequency
+
+**Quick Method (Variables Tab):**
+1. Open GNU Radio Companion: `gnuradio-companion gnuradio/vhfListeningGRC.grc`
+2. In a **Variable** block on the left of the screen, find the `freq` variable
+3. Double-click the `freq` variable block
+4. Change the **Value** field:
+   - **Testing**: `162.400e6` (Victoria Weather Station)
+   - **Production**: `156.800e6` (Marine Channel 16)
+5. Click "Generate" to update the Python files
+
+**Alternative (GUI Mode):**
+- If in GUI mode, you can also use the frequency slider control during runtime testing
+- Use this to find the optimal frequency for your location before setting the fixed value  
 
 ### GUI vs Headless Modes
 
@@ -55,8 +70,7 @@ Test with GUI mode first to find the best settings for your antenna/location, th
 6. Set Options → Generate Options to "No GUI"
 7. Generate (Press icon of box hovering over down arrow) - creates headless Python script (options_0.py)
 
-*Optionally, could also deactivate the "File Sink" needed for production to serve to icecast,
-and could enable the "Audio Sink" for local playback.*
+*Optionally, for development you can disable the "Custom Icecast Sink" and enable the "Audio Sink" for local audio playback through speakers/headphones.*
 
 ---
 
@@ -64,7 +78,7 @@ and could enable the "Audio Sink" for local playback.*
 
 **Current Signal Chain:**
 ```
-RTL-SDR Source → Rational Resampler → NBFM Receive → AGC2 → High Pass Filter → Low Pass Filter → File Sink
+RTL-SDR Source → Rational Resampler → NBFM Receive → AGC2 → High Pass Filter → Low Pass Filter → Custom Icecast Sink
 ```
 
 This professional signal processing chain converts raw radio waves into clean audio suitable for emergency monitoring.
@@ -96,17 +110,17 @@ These blocks are essential for basic VHF reception and cannot be bypassed:
 - Max Deviation: variable - fixed at 5000 Hz - narrow band FM standard for weather/marine
 - Tau: variable - fixed at 75e-6 seconds - North American de-emphasis time constant  
 
-### 4. **File Sink** *(Required for Production)*
-- Purpose: Outputs audio data to external streaming process for Icecast
-- File: /tmp/gnuradio_audio - named pipe for streaming to FFmpeg
-- Type: Float - 32-bit floating point audio samples
-- Unbuffered: On - ensures real-time streaming without delays
-- Append file: Overwrite
+### 4. **Custom Icecast Sink** *(Required for Production)*
+- Purpose: Streams audio directly to Icecast server with real-time MP3 encoding
+- Input: Float32 audio samples from GNU Radio processing chain
+- Features: MP3 encoding, Icecast connection management, environment configuration
+- Implementation: Custom embedded Python block (see [Custom Icecast Sink Development](#custom-icecast-sink-development))
 
 ### 4b. **Audio Sink** *(Alternative for Development)*
 - Purpose: Plays audio directly through local speakers/headphones
-- Sample Rate: `audio_rate` variable - must match flowgraph audio rate
+- Sample Rate: `audio_rate` variable - must match flowgraph audio rate (48000 Hz)
 - When to use: For development, testing, and parameter tuning
+- Setup: Enable this block and disable the Custom Icecast Sink for local audio monitoring
 
 ## Optional Processing Blocks
 
@@ -276,12 +290,188 @@ Common Values:
 
 ### **rail_low** & **rail_high** - Hard Limiter Clipping Levels
 Purpose: Prevents audio clipping by hard-limiting signal peaks
-Digital Audio Range: 
+Digital Audio Range:
 - Digital audio systems use -1.0 to +1.0 as the full scale range
 - If sound is beyond ±1.0 = Hard clipping, distortion, potential equipment damage
 
 Guidelines for rail_low, rail_high:
-- `±0.6` - Very conservative, significant headroom, may limit dynamics  
+- `±0.6` - Very conservative, significant headroom, may limit dynamics
 - `±0.8` - **Recommended** - good protection with adequate headroom
 - `±0.9` - Aggressive, minimal headroom, risk of occasional clipping
 - `±1.0` - Dangerous, no headroom, guaranteed distortion on peaks
+
+---
+
+# Custom Icecast Sink Development
+
+## Understanding the Custom Icecast Sink
+
+The VHF system uses a custom GNU Radio block for streaming audio directly to Icecast with real-time MP3 encoding. This custom functionality is embedded in the GRC file (`gnuradio/vhfListeningGRC.grc`) as an "Embedded Python Block".
+
+### Why a Custom Block?
+
+Standard GNU Radio doesn't include direct Icecast streaming. The custom block:
+- Handles real-time MP3 encoding using `lameenc`
+- Manages Icecast connection and streaming with `python-shout`
+- Loads configuration from `.env` files
+- Includes robust error handling and logging
+
+## Restoring the Custom Icecast Sink
+
+If the custom icecast sink gets accidentally deleted from the GRC file, here are your recovery options:
+
+### Option 1: Git Restore (Recommended)
+
+**Quick Recovery:**
+```bash
+# Check what changed
+git status
+git diff gnuradio/vhfListeningGRC.grc
+
+# Restore the GRC file
+git checkout -- gnuradio/vhfListeningGRC.grc
+
+# Regenerate Python files
+cd gnuradio
+gnuradio-companion vhfListeningGRC.grc
+# Click "Generate" button, then exit
+```
+
+### Option 2: Manual Recreation (Simple with VSCode)
+
+First, install VSCode as the default editor to enable easy copy-paste editing of embedded Python blocks. 
+Without setting vscode as the default terminal, GNURadio-companion will open the boilerplate Embedded Python Block with Vim, which has no easy copy paste options. 
+
+#### Step 1: Setup VSCode as Default Editor (One-time setup)
+
+Easily install VSCode via "Pi Apps" on Linux OR via the terminal:
+
+```bash
+sudo apt update && sudo apt install code
+```
+
+Then, set VSCode as default editor for text files:
+
+```bash
+xdg-mime default code.desktop text/plain
+```
+
+#### Step 2: Create the Embedded Python Block
+1. **Open GNU Radio Companion:**
+   ```bash
+   gnuradio-companion gnuradio/vhfListeningGRC.grc
+   ```
+
+2. **Add the block:**
+   - In the right sidebar, search for "Python Block"
+   - Drag and drop it into the flowgraph
+   - Connect it at the end of the pipeline (where the original icecast sink was)
+
+3. **Open for editing:**
+   - Double-click the "Embedded Python Block" to open properties
+   - Under "General" → "Code", click "Open in Editor"
+   - **VSCode opens** with the boilerplate template
+
+#### Step 3: Replace with Custom Icecast Code
+
+**VSCode will show this boilerplate:**
+```python
+"""
+Embedded Python Blocks:
+
+Each time this file is saved, GRC will instantiate the first class it finds
+to get ports and parameters of your block. The arguments to __init__  will
+be the parameters. All of them are required to have default values!
+"""
+
+import numpy as np
+from gnuradio import gr
+
+class blk(gr.sync_block):  # other base classes are basic_block, decim_block, interp_block
+    """Embedded Python Block example - a simple multiply const"""
+
+    def __init__(self, example_param=1.0):  # only default arguments here
+        """arguments to this function show up as parameters in GRC"""
+        gr.sync_block.__init__(
+            self,
+            name='Embedded Python Block',   # will show up in GRC
+            in_sig=[np.complex64],
+            out_sig=[np.complex64]
+        )
+        # if an attribute with the same name as a parameter is found,
+        # a callback is registered (properties work, too).
+        self.example_param = example_param
+
+    def work(self, input_items, output_items):
+        """example: multiply with constant"""
+        output_items[0][:] = input_items[0] * self.example_param
+        return len(output_items[0])
+```
+
+**Replace the entire file contents with:**
+1. **Open** `gnuradio/icecast_sink.py` in another VSCode tab
+2. **Copy everything** from `icecast_sink.py`
+3. **Paste into the embedded block file**, replacing all the boilerplate
+4. **Save the file** in VSCode
+
+#### Step 4: Generate and Test
+1. **Return to GNU Radio Companion**
+2. **Click "Generate"** (📦↓ icon) to create `options_0.py` and `options_0_epy_block_0.py`
+3. **Test the implementation:**
+   ```bash
+   cd gnuradio
+   python3 options_0.py
+   ```
+
+**Expected output:**
+- RTL-SDR Blog V4 detection
+- MP3 encoder initialization
+- Icecast connection success
+- Audio streaming to your configured server
+
+#### Step 5: Verify Connection
+Connect the block in the flowgraph:
+- **Input**: Connect from `analog_rail_ff_0` output
+- **No output**: It's a sink block (audio goes to Icecast)
+
+The embedded block should now work identically to the original implementation!
+
+### Option 3: Direct GRC File Editing (Advanced)
+
+If you're comfortable with XML editing, you can directly edit the GRC file:
+
+1. Open `gnuradio/vhfListeningGRC.grc` in a text editor
+2. Find the `epy_block_0` section
+3. Locate the `_source_code` parameter
+4. Replace the code content with the implementation from `icecast_sink.py`
+
+**Note:** The code in the GRC file is stored as a single escaped string, making this approach error-prone.
+
+## Protected Files
+
+Always commit these files to protect the custom functionality:
+
+1. **`gnuradio/vhfListeningGRC.grc`** - Contains the embedded block (primary)
+2. **`gnuradio/icecast_sink.py`** - Master copy of implementation (backup)
+3. **`gnuradio/options_0_epy_block_0.py`** - Generated file (auto-created)
+4. **`services/vhf-gnuradio.service`** - Includes RTL-SDR v4 environment fix
+
+## Development Notes
+
+**Key Differences Between Standalone and Embedded:**
+- **Standalone class**: `icecast_sink` (in icecast_sink.py)
+- **Embedded class**: `blk` (required by GNU Radio Companion)
+- Both implementations are functionally identical
+
+**Why We Edited GRC Directly:**
+The GNU Radio Companion embedded block workflow was problematic:
+- **"Open in Editor" launches vim without clipboard access**
+- No copy-paste capability from external files
+- Difficult to understand which boilerplate template parts to preserve
+- Managing the class name requirement (`blk` vs `icecast_sink`)
+- Risk of vim syntax errors breaking the block
+
+**Solution:** Direct GRC XML file editing bypassed these GUI limitations and provided:
+- Full clipboard access for copying code
+- Precise control over the embedded implementation
+- Ability to preserve the exact working code structure
