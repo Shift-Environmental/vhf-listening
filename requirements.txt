@@ -1,5 +1,0 @@
-numpy>=1.20.0
-scipy>=1.7.0
-python-dotenv>=0.19.0
-python-shout>=0.2.7
-lameenc>=1.8.0
