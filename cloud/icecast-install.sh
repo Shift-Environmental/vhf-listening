@@ -340,7 +340,7 @@ log_info "Server Details:"
 echo "  • URL: http://$SERVER_HOST:$SERVER_PORT/"
 echo "  • Admin URL: http://$SERVER_HOST:$SERVER_PORT/admin/"
 echo "  • Admin Username: admin"
-echo "  • Admin Password: [hidden]"
+echo "  • Admin Password: $ADMIN_PASSWORD"
 echo
 log_info "For Source Clients (streaming to server):"
 echo "  • Server: $SERVER_HOST"
