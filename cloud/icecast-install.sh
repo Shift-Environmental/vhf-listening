@@ -246,10 +246,6 @@ cat > /tmp/icecast.xml << EOF
 
     <security>
         <chroot>0</chroot>
-        <changeowner>
-            <user>icecast</user>
-            <group>icecast</group>
-        </changeowner>
     </security>
 
     <authentication>
