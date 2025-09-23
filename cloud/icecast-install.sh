@@ -89,7 +89,29 @@ if ! command -v sudo &> /dev/null; then
 fi
 
 log_info "Icecast2 Auto-Installer Starting..."
+log_info "Icecast2 service will run as user: icecast"
 echo
+
+# Function to create icecast user if it doesn't exist
+create_icecast_user() {
+    if ! getent passwd icecast &> /dev/null; then
+        log_step "Creating icecast system user..."
+        if getent group icecast &> /dev/null; then
+            # Group exists, create user with existing group
+            sudo useradd --system --home /var/lib/icecast2 --shell /bin/false -g icecast icecast
+        else
+            # Create both user and group
+            sudo useradd --system --home /var/lib/icecast2 --shell /bin/false --group icecast icecast
+        fi
+        
+        # Create home directory
+        sudo mkdir -p /var/lib/icecast2
+        sudo chown icecast:icecast /var/lib/icecast2
+        log_info "✓ Created icecast user and group"
+    else
+        log_info "icecast user already exists"
+    fi
+}
 
 # Check if this is a reconfiguration
 RECONFIGURE=false
@@ -114,6 +136,9 @@ if [[ "$RECONFIGURE" == false ]]; then
 else
     log_step "Icecast2 already installed, proceeding with reconfiguration..."
 fi
+
+# Step 1.5: Create icecast user if it doesn't exist
+create_icecast_user
 
 # Step 2: Stop Icecast2 service for configuration (only if running)
 if sudo systemctl is-active --quiet icecast2; then
@@ -142,6 +167,7 @@ DEFAULT_MAX_SOURCES="${EXISTING_MAX_SOURCES:-2}"
 DEFAULT_SERVER_NAME="${EXISTING_SERVER_NAME:-VHF Monitoring Station}"
 DEFAULT_LOCATION="${EXISTING_LOCATION:-Earth}"
 DEFAULT_ADMIN="${EXISTING_ADMIN:-admin@localhost}"
+# Changed default log directory to be accessible by icecast user
 DEFAULT_LOG_DIR="${EXISTING_LOG_DIR:-/var/log/icecast2}"
 DEFAULT_LOG_LEVEL="${EXISTING_LOG_LEVEL:-3}"
 
@@ -153,8 +179,8 @@ prompt_with_default "Maximum number of sources" "$DEFAULT_MAX_SOURCES" "MAX_SOUR
 
 echo
 log_info "Password Configuration:"
-prompt_password "Source password (for streaming clients to connect)" "SOURCE_PASSWORD"
-prompt_password "Admin password (for web interface access)" "ADMIN_PASSWORD"
+read -p "Source password (for streaming clients to connect): " SOURCE_PASSWORD
+read -p "Admin password (for web interface access): " ADMIN_PASSWORD
 
 echo
 log_info "Server Information:"
@@ -180,7 +206,7 @@ fi
 # Step 6: Generate new configuration file
 log_step "Generating Icecast2 configuration file..."
 
-# Create temporary config file with timestamp comment
+# Create temporary config file
 cat > /tmp/icecast.xml << EOF
 <icecast>
     <location>$SERVER_LOCATION</location>
@@ -220,21 +246,21 @@ cat > /tmp/icecast.xml << EOF
 
     <security>
         <chroot>0</chroot>
+        <changeowner>
+            <user>icecast</user>
+            <group>icecast</group>
+        </changeowner>
     </security>
-</icecast>
-EOF
 
-# Add authentication section
-cat >> /tmp/icecast.xml << 'EOF'
     <authentication>
-        <source-password>SOURCE_PASSWORD_PLACEHOLDER</source-password>
+        <source-password>$SOURCE_PASSWORD</source-password>
         <admin-user>admin</admin-user>
-        <admin-password>ADMIN_PASSWORD_PLACEHOLDER</admin-password>
+        <admin-password>$ADMIN_PASSWORD</admin-password>
     </authentication>
 
     <limits>
-        <clients>MAX_CLIENTS_PLACEHOLDER</clients>
-        <sources>MAX_SOURCES_PLACEHOLDER</sources>
+        <clients>$MAX_CLIENTS</clients>
+        <sources>$MAX_SOURCES</sources>
         <threadpool>5</threadpool>
         <queue-size>524288</queue-size>
         <client-timeout>30</client-timeout>
@@ -245,24 +271,12 @@ cat >> /tmp/icecast.xml << 'EOF'
 </icecast>
 EOF
 
-# Replace placeholders with actual values
-sed -i "s/SOURCE_PASSWORD_PLACEHOLDER/$SOURCE_PASSWORD/g" /tmp/icecast.xml
-sed -i "s/ADMIN_PASSWORD_PLACEHOLDER/$ADMIN_PASSWORD/g" /tmp/icecast.xml
-sed -i "s/MAX_CLIENTS_PLACEHOLDER/$MAX_CLIENTS/g" /tmp/icecast.xml
-sed -i "s/MAX_SOURCES_PLACEHOLDER/$MAX_SOURCES/g" /tmp/icecast.xml
-
-# Step 7: Install the new configuration (only if changed)
-NEEDS_CONFIG_UPDATE=true
-if config_changed "/tmp/icecast.xml"; then
-    log_step "Installing updated configuration..."
-    sudo mv /tmp/icecast.xml /etc/icecast2/icecast.xml
-    sudo chown root:icecast /etc/icecast2/icecast.xml
-    sudo chmod 640 /etc/icecast2/icecast.xml
-else
-    log_info "Configuration unchanged, skipping file update."
-    NEEDS_CONFIG_UPDATE=false
-    rm -f /tmp/icecast.xml
-fi
+# Step 7: Install the new configuration
+log_step "Installing updated configuration..."
+sudo mv /tmp/icecast.xml /etc/icecast2/icecast.xml
+# Keep system config files as root:root with proper permissions
+sudo chown root:root /etc/icecast2/icecast.xml
+sudo chmod 644 /etc/icecast2/icecast.xml
 
 # Step 8: Create log directory if it doesn't exist
 if [[ ! -d "$LOG_DIR" ]]; then
@@ -271,11 +285,11 @@ if [[ ! -d "$LOG_DIR" ]]; then
     sudo chown icecast:icecast "$LOG_DIR"
 else
     log_info "Log directory already exists: $LOG_DIR"
-    # Ensure correct ownership
+    # Ensure correct ownership for icecast user
     sudo chown icecast:icecast "$LOG_DIR"
 fi
 
-# Step 9: Configure Icecast2 to start automatically (only if not already enabled)
+# Step 9: Configure Icecast2 to start automatically and fix user configuration
 if ! grep -q "ENABLE=true" /etc/default/icecast2; then
     log_step "Enabling Icecast2 to start automatically..."
     sudo sed -i 's/ENABLE=false/ENABLE=true/' /etc/default/icecast2
@@ -296,22 +310,10 @@ else
     log_warn "UFW not active. Make sure port $SERVER_PORT is open in your firewall/security groups."
 fi
 
-# Step 11: Start Icecast2 service (only if config changed or not running)
-NEEDS_RESTART=false
-if [[ "$NEEDS_CONFIG_UPDATE" == true ]]; then
-    NEEDS_RESTART=true
-elif ! sudo systemctl is-active --quiet icecast2; then
-    NEEDS_RESTART=true
-fi
-
-if [[ "$NEEDS_RESTART" == true ]]; then
-    log_step "Starting/restarting Icecast2 service..."
-    sudo systemctl restart icecast2
-    sudo systemctl enable icecast2
-else
-    log_info "Icecast2 service already running with current configuration."
-    sudo systemctl enable icecast2 2>/dev/null || true  # Enable if not already enabled
-fi
+# Step 11: Start Icecast2 service
+log_step "Starting/restarting Icecast2 service..."
+sudo systemctl restart icecast2
+sudo systemctl enable icecast2
 
 # Step 12: Verify installation
 log_step "Verifying installation..."
@@ -343,7 +345,7 @@ echo
 log_info "For Source Clients (streaming to server):"
 echo "  • Server: $SERVER_HOST"
 echo "  • Port: $SERVER_PORT"
-echo "  • Source Password: [hidden]"
+echo "  • Source Password: $SOURCE_PASSWORD"
 echo "  • Mount Point: Choose any (e.g., /mystream)"
 echo
 log_info "Service Management:"
@@ -355,6 +357,7 @@ echo "  • Logs: sudo journalctl -u icecast2 -f"
 echo
 log_info "Configuration file: /etc/icecast2/icecast.xml"
 log_info "Log directory: $LOG_DIR"
+log_info "Icecast2 service runs as user: icecast"
 echo
 log_warn "Remember to:"
 echo "  • Open port $SERVER_PORT in your cloud provider's security groups"
