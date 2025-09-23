@@ -32,7 +32,7 @@ command -v sudo >/dev/null || { log_error "sudo required."; exit 1; }
 USER_NAME="$(whoami)"
 HOME_DIR="$(eval echo ~"$USER_NAME")"
 PROJECT_DIR="$HOME_DIR/vhf-listening"
-CONFIG_DIR="$PROJECT_DIR/config"
+CONFIG_DIR="$PROJECT_DIR/sdr/config"
 RUNNER="/usr/local/bin/vhfmon-run.sh"
 UNIT_TEMPLATE="/etc/systemd/system/vhfmon@.service"
 MARKER="Managed-By: vhfmon-install"
