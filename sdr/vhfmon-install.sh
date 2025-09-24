@@ -2,7 +2,7 @@
 # VHF Maritime Monitoring - Installer (template unit + small runner)
 # - Uses existing .env files only; exits if none found
 # - Creates /usr/local/bin/vhfmon-run.sh and /etc/systemd/system/vhfmon@.service
-# - Enables instances for ACTIVE=true envs
+# - Enables instances for ENABLED=true envs
 # - Prunes prior managed units (vhfmon@*.service instances)
 
 set -e
@@ -129,8 +129,12 @@ case "${CODEC,,}" in
 esac
 
 dev_opt=""
-if [[ -n "$SDR_SERIAL" && "$SDR_SERIAL" != "auto" ]]; then
-  dev_opt="-d rtl=$SDR_SERIAL"
+if [[ -n "$SDR_DEVICE_INDEX" ]]; then
+  if [[ ! "$SDR_DEVICE_INDEX" =~ ^[0-9]+$ ]]; then
+    echo "Error: SDR_DEVICE_INDEX must be a non-negative integer, got: $SDR_DEVICE_INDEX"
+    exit 1
+  fi
+  dev_opt="-d $SDR_DEVICE_INDEX"
 fi
 
 echo "========================================="
@@ -138,6 +142,7 @@ echo "VHF Monitoring Station Starting: $(basename "$ENV_FILE" .env)"
 echo "Description: ${DESCRIPTION}"
 mhz=$(echo "scale=3; ${VHF_FREQUENCY}/1000000" | bc -l)
 echo "Frequency: ${VHF_FREQUENCY} Hz (${mhz} MHz)"
+echo "Device Index: ${SDR_DEVICE_INDEX:-0 (default)}"
 echo "Codec: ${CODEC}  Bitrate: ${BITRATE}"
 echo "Stream: http://${ICECAST_HOST}:${ICECAST_PORT}/${MOUNT}"
 echo "========================================="
@@ -176,19 +181,19 @@ WantedBy=multi-user.target
 EOF
 
 # --- Step 6: Prune legacy managed units ---
-log_step "Pruning legacy vhfmon-* unit files..."
+log_step "Pruning legacy vhfmon units..."
 while IFS= read -r -d '' f; do
-  if grep -q "$MARKER" "$f" 2>/dev/null; then
+  if [[ "$(basename "$f")" =~ ^vhfmon(@.*)?\.service$ ]] && grep -q "$MARKER" "$f" 2>/dev/null; then
     u="$(basename "$f")"
     log_info "Stopping & disabling $u"
-    sudo systemctl stop "$u" 2>/dev/null
-    sudo systemctl disable "$u" 2>/dev/null
+    sudo systemctl stop "$u" 2>/dev/null || true
+    sudo systemctl disable "$u" 2>/dev/null || true
     log_info "Removing $u"
     sudo rm -f "$f"
   fi
-done < <(find /etc/systemd/system -maxdepth 1 -type f -name 'vhfmon-*.service' -print0)
+done < <(find /etc/systemd/system /lib/systemd/system -maxdepth 1 -type f -name 'vhfmon*.service' -print0)
 
-# --- Step 7: Reload systemd, enable instances for ACTIVE=true ---
+# --- Step 7: Reload systemd, enable instances for ENABLED=true ---
 log_step "Reloading systemd..."
 sudo systemctl daemon-reload
 
@@ -196,14 +201,14 @@ log_step "Configuring instances from .env files..."
 enabled_any=false
 for cfg in "${envs[@]}"; do
   name="$(basename "$cfg" .env)"
-  if grep -q "^ACTIVE=true" "$cfg"; then
+  if grep -q "^ENABLED=true" "$cfg"; then
     sudo systemctl enable "vhfmon@${name}.service"
     enabled_any=true
   else
     sudo systemctl disable "vhfmon@${name}.service" 2>/dev/null
   fi
 done
-$enabled_any && log_info "Enabled ACTIVE instances." || log_warn "No ACTIVE=true instances to enable."
+$enabled_any && log_info "Enabled ENABLED instances." || log_warn "No ENABLED=true instances to enable."
 
 # --- Step 8: Summary ---
 echo
