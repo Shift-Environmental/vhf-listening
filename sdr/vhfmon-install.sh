@@ -130,7 +130,7 @@ esac
 
 dev_opt=""
 if [[ -n "$SDR_SERIAL" && "$SDR_SERIAL" != "auto" ]]; then
-  dev_opt="-d serial=$SDR_SERIAL"
+  dev_opt="-d rtl=$SDR_SERIAL"
 fi
 
 echo "========================================="
