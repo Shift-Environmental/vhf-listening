@@ -131,6 +131,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=$USER_NAME
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 EnvironmentFile=$CONFIG_DIR/%i.env
 WorkingDirectory=$PROJECT_DIR
 ExecStart=$RUNNER $CONFIG_DIR/%i.env
