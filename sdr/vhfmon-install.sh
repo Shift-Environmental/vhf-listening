@@ -3,7 +3,7 @@
 # - Uses existing .env files only; exits if none found
 # - Creates /usr/local/bin/vhfmon-run.sh and /etc/systemd/system/vhfmon@.service
 # - Enables instances for ENABLED=true envs
-# - Prunes prior managed units (vhfmon@*.service instances)
+# - Prunes prior managed units (vhfmon@*.service instances) before installing template
 
 set -e
 
@@ -62,11 +62,11 @@ if [[ "$INSTALL_RTLSDR" == true ]]; then
   sudo apt install -y libusb-1.0-0-dev git cmake pkg-config build-essential
   cd /tmp
   rm -rf rtl-sdr-blog
-  git clone --depth 1 https://github.com/rtlsdrblog/rtl-sdr-blog
+  git clone --depth 1 https://github.com/rtlsdrblog/rtl-sdr-blog || { log_error "Git clone failed"; exit 1; }
   cd rtl-sdr-blog
-  mkdir build && cd build
-  cmake ../ -DINSTALL_UDEV_RULES=ON
-  make -j"$(nproc)"
+  mkdir build && cd build || { log_error "Failed to create build directory"; exit 1; }
+  cmake ../ -DINSTALL_UDEV_RULES=ON || { log_error "CMake failed"; exit 1; }
+  make -j"$(nproc)" || { log_error "Make failed"; exit 1; }
   sudo make install
   sudo cp ../rtl-sdr.rules /etc/udev/rules.d/
   sudo ldconfig
@@ -81,9 +81,10 @@ sudo apt install -y ffmpeg alsa-utils bc
 
 # --- Step 3: Verify configs ---
 log_step "Scanning for .env configs in $CONFIG_DIR ..."
+mkdir -p "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
 if [[ ! -d "$CONFIG_DIR" ]]; then
-  log_warn "Directory missing: $CONFIG_DIR"
-  log_info "Create one or more .env files, then re-run."
+  log_error "Failed to create directory: $CONFIG_DIR"
   exit 2
 fi
 
@@ -97,7 +98,52 @@ fi
 log_info "Found ${#envs[@]} config(s)."
 shopt -u nullglob
 
-# --- Step 4: Install/update runner script ---
+# --- Step 4: Prune legacy managed units ---
+log_step "Pruning legacy vhfmon units..."
+if systemctl list-units --state=running | grep -q "vhfmon@"; then
+  log_warn "Active vhfmon@ instances detected. They will be stopped."
+fi
+while IFS= read -r -d '' f; do
+  if [[ "$(basename "$f")" =~ ^vhfmon(@.*)?\.service$ ]] && grep -q "$MARKER" "$f" 2>/dev/null; then
+    u="$(basename "$f")"
+    log_info "Stopping & disabling $u"
+    sudo systemctl reset-failed "$u" 2>/dev/null || true
+    sudo systemctl stop "$u" 2>/dev/null || true
+    sudo systemctl disable "$u" 2>/dev/null || true
+    log_info "Removing $u"
+    sudo rm -f "$f"
+  fi
+done < <(find /etc/systemd/system /lib/systemd/system -maxdepth 1 -type f -name 'vhfmon*.service' -print0)
+sudo rm -f /etc/systemd/system/multi-user.target.wants/vhfmon@*.service
+if compgen -G "/etc/systemd/system/vhfmon@*.service" >/dev/null; then
+  log_warn "Some vhfmon@*.service files remain; manual cleanup may be needed."
+fi
+
+# --- Step 5: Write/refresh systemd template ---
+log_step "Installing unit template: $UNIT_TEMPLATE"
+sudo tee "$UNIT_TEMPLATE" >/dev/null <<EOF
+# $MARKER
+[Unit]
+Description=VHF Monitor (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$USER_NAME
+EnvironmentFile=$CONFIG_DIR/%i.env
+WorkingDirectory=$PROJECT_DIR
+ExecStart=$RUNNER $CONFIG_DIR/%i.env
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# --- Step 6: Install/update runner script ---
 log_step "Installing runner: $RUNNER"
 sudo tee "$RUNNER" >/dev/null <<'EOF'
 #!/bin/bash
@@ -143,6 +189,7 @@ echo "Description: ${DESCRIPTION}"
 mhz=$(echo "scale=3; ${VHF_FREQUENCY}/1000000" | bc -l)
 echo "Frequency: ${VHF_FREQUENCY} Hz (${mhz} MHz)"
 echo "Device Index: ${SDR_DEVICE_INDEX:-0 (default)}"
+echo "Warning: Device indices may change on reboot or USB re-plug"
 echo "Codec: ${CODEC}  Bitrate: ${BITRATE}"
 echo "Stream: http://${ICECAST_HOST}:${ICECAST_PORT}/${MOUNT}"
 echo "========================================="
@@ -156,56 +203,57 @@ exec rtl_fm $dev_opt -f "$VHF_FREQUENCY" -M fm -s "$RTL_SAMPLE_RATE" -r "$RTL_OU
 EOF
 sudo chmod +x "$RUNNER"
 
-# --- Step 5: Write/refresh systemd template ---
-log_step "Installing unit template: $UNIT_TEMPLATE"
-sudo tee "$UNIT_TEMPLATE" >/dev/null <<EOF
-# $MARKER
-[Unit]
-Description=VHF Monitor (%i)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=$USER_NAME
-EnvironmentFile=$CONFIG_DIR/%i.env
-WorkingDirectory=$PROJECT_DIR
-ExecStart=$RUNNER $CONFIG_DIR/%i.env
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# --- Step 6: Prune legacy managed units ---
-log_step "Pruning legacy vhfmon units..."
-while IFS= read -r -d '' f; do
-  if [[ "$(basename "$f")" =~ ^vhfmon(@.*)?\.service$ ]] && grep -q "$MARKER" "$f" 2>/dev/null; then
-    u="$(basename "$f")"
-    log_info "Stopping & disabling $u"
-    sudo systemctl stop "$u" 2>/dev/null || true
-    sudo systemctl disable "$u" 2>/dev/null || true
-    log_info "Removing $u"
-    sudo rm -f "$f"
-  fi
-done < <(find /etc/systemd/system /lib/systemd/system -maxdepth 1 -type f -name 'vhfmon*.service' -print0)
-
 # --- Step 7: Reload systemd, enable instances for ENABLED=true ---
 log_step "Reloading systemd..."
 sudo systemctl daemon-reload
 
+# Verify template exists
+if [[ ! -f "$UNIT_TEMPLATE" ]]; then
+  log_error "Systemd template $UNIT_TEMPLATE not found. Installation failed."
+  exit 1
+fi
+
 log_step "Configuring instances from .env files..."
 enabled_any=false
 for cfg in "${envs[@]}"; do
+  source "$cfg"
   name="$(basename "$cfg" .env)"
+  # Validate instance name
+  if [[ ! "$name" =~ ^[a-zA-Z0-9-]+$ ]]; then
+    log_error "Invalid .env filename: $(basename "$cfg"). Use alphanumeric or hyphens only (e.g., sdr-o.env)."
+    exit 1
+  fi
+  # Validate required variables
+  required_vars=("SDR_DEVICE_INDEX" "VHF_FREQUENCY" "ICECAST_HOST" "ICECAST_PORT" "ICECAST_SOURCE_PASSWORD" "ICECAST_MOUNT_POINT")
+  for var in "${required_vars[@]}"; do
+    if [[ -z "${!var}" ]]; then
+      log_error "Missing $var in $cfg"
+      exit 1
+    fi
+  done
+  if [[ ! "$SDR_DEVICE_INDEX" =~ ^[0-9]+$ ]]; then
+    log_error "Invalid SDR_DEVICE_INDEX in $cfg; must be a non-negative integer"
+    exit 1
+  fi
+  if [[ ! "$VHF_FREQUENCY" =~ ^[0-9]+$ || VHF_FREQUENCY -lt 156000000 || VHF_FREQUENCY -gt 162000000 ]]; then
+    log_error "Invalid VHF_FREQUENCY ($VHF_FREQUENCY) in $cfg; must be 156–162 MHz"
+    exit 1
+  fi
+  # Validate SDR_DEVICE_INDEX against available devices
+  max_index=$(rtl_test -t 2>&1 | grep -o "Found [0-9]\+ device(s)" | awk '{print $2-1}' || echo "-1")
+  if [[ -n "$SDR_DEVICE_INDEX" && ( "$SDR_DEVICE_INDEX" -lt 0 || "$SDR_DEVICE_INDEX" -gt "$max_index" ) ]]; then
+    log_error "Invalid SDR_DEVICE_INDEX ($SDR_DEVICE_INDEX) in $cfg; valid range: 0–$max_index"
+    exit 1
+  fi
   if grep -q "^ENABLED=true" "$cfg"; then
-    sudo systemctl enable "vhfmon@${name}.service"
+    log_info "Enabling vhfmon@${name}.service"
+    sudo systemctl enable "vhfmon@${name}.service" || {
+      log_error "Failed to enable vhfmon@${name}.service"
+      exit 1
+    }
     enabled_any=true
   else
-    sudo systemctl disable "vhfmon@${name}.service" 2>/dev/null
+    sudo systemctl disable "vhfmon@${name}.service" 2>/dev/null || true
   fi
 done
 $enabled_any && log_info "Enabled ENABLED instances." || log_warn "No ENABLED=true instances to enable."
@@ -220,5 +268,5 @@ echo
 log_info "Start enabled ones now with:"
 echo "  sudo systemctl start vhfmon@*.service"
 echo
-[[ "$INSTALL_RTLSDR" == true ]] && log_warn "Drivers updated; a reboot may help."
+[[ "$INSTALL_RTLSDR" == true ]] && log_warn "Drivers updated; a reboot may be needed."
 log_info "Done."
