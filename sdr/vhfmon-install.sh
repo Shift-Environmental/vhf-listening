@@ -77,7 +77,7 @@ fi
 
 # --- Step 2: Dependencies ---
 log_step "Installing dependencies..."
-sudo apt install -y ffmpeg alsa-utils bc
+sudo apt install -y ffmpeg alsa-utils
 
 # --- Step 3: Verify configs ---
 log_step "Scanning for .env configs in $CONFIG_DIR ..."
@@ -183,20 +183,18 @@ if [[ -n "$SDR_DEVICE_INDEX" ]]; then
   dev_opt="-d $SDR_DEVICE_INDEX"
 fi
 
-echo "========================================="
+echo "======================================================================"
 echo "VHF Monitoring Station Starting: $(basename "$ENV_FILE" .env)"
 echo "Description: ${DESCRIPTION}"
-mhz=$(echo "scale=3; ${VHF_FREQUENCY}/1000000" | bc -l)
-echo "Frequency: ${VHF_FREQUENCY} Hz (${mhz} MHz)"
+echo "Frequency: ${VHF_FREQUENCY} Hz"
 echo "Device Index: ${SDR_DEVICE_INDEX:-0 (default)}"
 echo "Warning: Device indices may change on reboot or USB re-plug"
 echo "Codec: ${CODEC}  Bitrate: ${BITRATE}"
 echo "Stream: http://${ICECAST_HOST}:${ICECAST_PORT}/${MOUNT}"
-echo "========================================="
+echo "======================================================================"
 
-exec rtl_fm $dev_opt -f "$VHF_FREQUENCY" -M fm -s "$RTL_SAMPLE_RATE" -r "$RTL_OUTPUT_RATE" -g "$RTL_GAIN" \
-     -p "${RTL_PPM_ERROR:-0}" -l "${RTL_SQUELCH:-0}" - \
- | ffmpeg -hide_banner -loglevel warning -f s16le -ar "$RTL_OUTPUT_RATE" -ac 1 -i pipe:0 -vn \
+exec rtl_fm $dev_opt -f "$VHF_FREQUENCY" -M fm -s "$RTL_SAMPLE_RATE" -r "$RTL_AUDIO_RATE" -E agc - \
+ | ffmpeg -hide_banner -loglevel warning -f s16le -ar "$RTL_AUDIO_RATE" -ac 1 -i pipe:0 -vn \
      -filter:a "highpass=f=${AUDIO_HIGHPASS:-300},lowpass=f=${AUDIO_LOWPASS:-3000},volume=${AUDIO_VOLUME:-2.0}" \
      "${ENC_OPTS[@]}" \
      "icecast://source:${ICECAST_SOURCE_PASSWORD}@${ICECAST_HOST}:${ICECAST_PORT}/${MOUNT}"
