@@ -233,16 +233,6 @@ for cfg in "${envs[@]}"; do
     log_error "Invalid SDR_DEVICE_INDEX in $cfg; must be a non-negative integer"
     exit 1
   fi
-  if [[ ! "$VHF_FREQUENCY" =~ ^[0-9]+$ || VHF_FREQUENCY -lt 156000000 || VHF_FREQUENCY -gt 162000000 ]]; then
-    log_error "Invalid VHF_FREQUENCY ($VHF_FREQUENCY) in $cfg; must be 156–162 MHz"
-    exit 1
-  fi
-  # Validate SDR_DEVICE_INDEX against available devices
-  max_index=$(rtl_test -t 2>&1 | grep -o "Found [0-9]\+ device(s)" | awk '{print $2-1}' || echo "-1")
-  if [[ -n "$SDR_DEVICE_INDEX" && ( "$SDR_DEVICE_INDEX" -lt 0 || "$SDR_DEVICE_INDEX" -gt "$max_index" ) ]]; then
-    log_error "Invalid SDR_DEVICE_INDEX ($SDR_DEVICE_INDEX) in $cfg; valid range: 0–$max_index"
-    exit 1
-  fi
   if grep -q "^ENABLED=true" "$cfg"; then
     log_info "Enabling vhfmon@${name}.service"
     sudo systemctl enable "vhfmon@${name}.service" || {
