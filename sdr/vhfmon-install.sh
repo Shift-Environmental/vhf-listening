@@ -195,8 +195,8 @@ echo "Codec: ${CODEC}  Bitrate: ${BITRATE}"
 echo "Stream: http://${ICECAST_HOST}:${ICECAST_PORT}/${MOUNT}"
 echo "======================================================================"
 
-exec rtl_fm $dev_opt -f "$VHF_FREQUENCY" -M fm -s "$RTL_SAMPLE_RATE" -r "$RTL_AUDIO_RATE" -E agc - \
- | ffmpeg -hide_banner -loglevel warning -f s16le -ar "$RTL_AUDIO_RATE" -ac 1 -i pipe:0 -vn \
+exec rtl_fm $dev_opt -f "$VHF_FREQUENCY" -M fm -s "$RTL_SAMPLE_RATE" -g "$RTL_GAIN" - \
+ | ffmpeg -hide_banner -loglevel warning -f s16le -ar "$RTL_SAMPLE_RATE" -ac 1 -i pipe:0 -vn \
      -filter:a "highpass=f=${AUDIO_HIGHPASS:-300},lowpass=f=${AUDIO_LOWPASS:-3000},volume=${AUDIO_VOLUME:-2.0}" \
      "${ENC_OPTS[@]}" \
      "icecast://source:${ICECAST_SOURCE_PASSWORD}@${ICECAST_HOST}:${ICECAST_PORT}/${MOUNT}"
