@@ -257,8 +257,9 @@ cat > /tmp/icecast.xml << EOF
     <limits>
         <clients>$MAX_CLIENTS</clients>
         <sources>$MAX_SOURCES</sources>
-        <threadpool>5</threadpool>
-        <queue-size>524288</queue-size>
+        <threadpool>4</threadpool>
+        <queue-size>16384</queue-size>
+        <burst-size>8192</burst-size>
         <client-timeout>30</client-timeout>
         <header-timeout>15</header-timeout>
         <source-timeout>10</source-timeout>
